@@ -1,0 +1,395 @@
+#include "stdafx.h"
+#include<stdio.h>
+#include<math.h>
+#include <opencv2/opencv.hpp>   
+#include<iostream>
+#include<stdlib.h>
+#define TEMPLATE_NUMBER 32
+#define INPUTFILE "font/testset/art.png"
+using namespace std;
+using namespace cv; 
+  
+const char *pstrWindowsBinaryTitle = "BINARY";
+const char *pstrWindowsSrcTitle = "RGB";
+const char *pstrWindowsGrayTitle = "GRAY";
+
+typedef struct image2char{
+	Mat image;
+	char s;
+}image2char;
+
+image2char ic[TEMPLATE_NUMBER];
+void LoadDatabase();
+
+void image_segmentation_horizonal(int &row_start,int &row_last,Mat mtx){
+	bool startr = false;
+	for(int y=0;y < mtx.rows;y++){
+		for(int x=0;x < mtx.cols;x++){
+			if(mtx.at<uchar>(Point(x,y)) == 0 && !startr){
+				row_start = y-1;
+				startr = true;
+			}
+			else if (mtx.at<uchar>(Point(x,y)) == 0 && startr){
+				row_last = y+1;
+			}
+		}	
+	}
+	
+}
+void image_segmentation_vertical(int (&col_start)[20],int (&col_last)[20],int &symbolnum,Mat mtx){
+	bool startc=false;
+	for(int x=0;x < mtx.cols;x++){
+		bool spacecol = false;
+		for(int y=0;y < mtx.rows;y++){
+			if(mtx.at<uchar>(Point(x,y)) == 0){;
+				spacecol = true;
+			}
+		}
+		if(spacecol&& !startc){
+			col_start[symbolnum] = x-1;
+			startc = true;
+
+		}
+		if(!spacecol && startc){
+			col_last[symbolnum] = x;
+			startc=false;
+
+			symbolnum++;
+		}
+	}
+}
+Mat process_component(Mat component){
+	int row_start = 0,row_last = 0;
+	image_segmentation_horizonal(row_start,row_last,component);
+	Mat result=component(Rect(0,row_start,component.cols,row_last-row_start));
+	return result;
+}
+
+void BP_algorithm(double (&bp)[8],Mat src){
+	Mat matbp;
+	matbp = src;
+	int row[3],col;
+	double count[8] ;
+	for(int n= 0;n<8;n++){
+		count[n]=0;
+	}
+	double count1=0;
+	col = matbp.cols/2;
+	row[0] = (matbp.rows+1)/4;
+	row[1] = (matbp.rows+1)/2;
+	row[2] = (matbp.rows+1)/4 + (matbp.rows+1)/2;
+	for(int i=0;i<matbp.cols;i++){
+		for(int j=0;j<matbp.rows;j++){
+			if(i<col && j<row[0] &&matbp.at<uchar>(Point(i,j)) == 0){
+				count[0]++;
+			}
+			if(i>=col && j<row[0] &&matbp.at<uchar>(Point(i,j)) == 0){
+				count[1]++;
+			}
+			if(i<col && j<row[1]&&j>= row[0] &&matbp.at<uchar>(Point(i,j)) == 0){
+				count[2]++;
+			}
+			if(i>=col && j<row[1]&&j>= row[0]&&matbp.at<uchar>(Point(i,j)) == 0){
+				count[3]++;
+
+			}
+			if(i<col && j<row[2] &&j>= row[1]&&matbp.at<uchar>(Point(i,j)) == 0){
+				count[4]++;
+			}
+			if(i>=col && j<row[2] &&j>= row[1]&&matbp.at<uchar>(Point(i,j)) == 0){
+				count[5]++;
+			}
+			if(i<col &&j>= row[2]&&matbp.at<uchar>(Point(i,j)) == 0){
+				count[6]++;
+			}
+			if(i>=col&&j>= row[2] &&matbp.at<uchar>(Point(i,j)) == 0){
+				count[7]++;
+			}if(matbp.at<uchar>(Point(i,j)) == 0){
+
+			}
+		}
+	}
+	Mat mtx3;
+	mtx3 = src;
+	int part_number = 3;
+
+	bp[0] = count[0]/(double)(col*row[0]);
+	bp[1] = count[1]/(double)((matbp.cols-col)*row[0]);
+	bp[2] = count[2]/(double)(col*(row[1]-row[0]));
+	bp[3] = count[3]/(double)((matbp.cols-col)*(row[1]-row[0]));
+	bp[4] = count[4]/(double)(col*(row[2]-row[1]));
+	bp[5] = count[5]/(double)((matbp.cols-col)*(row[2]-row[1]));
+	bp[6] = count[6]/(double)(col*(matbp.rows-row[2]));
+	bp[7] = count[7]/(double)((matbp.cols-col)*(matbp.rows-row[2]));
+	
+
+}
+
+double check_similarity1(Mat src,Mat templ){
+	Mat tmp;
+	resize(src,tmp,Size(templ.cols,templ.rows),0,0,CV_INTER_LINEAR);
+	double ratio_src=((double)src.cols)/((double)src.rows);
+	double ratio_templ=((double)templ.cols)/((double)templ.rows);
+	if(ratio_src>2)
+		ratio_src=2;
+	if(ratio_templ>2)
+		ratio_templ=2;
+	if(ratio_src<0.3)
+		ratio_src=0.3;
+	if(ratio_templ<0.3)
+		ratio_templ=0.3;
+
+	double count=0;
+
+	for(int i=0;i<templ.cols;i++)
+		for(int j=0;j<templ.rows;j++){
+
+			if((abs(tmp.at<uchar>(Point(i,j))-templ.at<uchar>(Point(i,j))))<100)
+				count++;
+			
+	}	
+	double diff_ratio=abs(ratio_src-ratio_templ);
+
+double similarity=count/(templ.cols*templ.rows);  
+
+
+	return similarity;
+}
+double check_similarity2(Mat src,Mat templ){
+	Mat tmp;
+	resize(src,tmp,Size(templ.cols,templ.rows),0,0,CV_INTER_LINEAR);
+	double ratio_src=((double)src.cols)/((double)src.rows);
+	double ratio_templ=((double)templ.cols)/((double)templ.rows);
+	if(ratio_src>2)
+		ratio_src=2;
+	if(ratio_templ>2)
+		ratio_templ=2;
+	if(ratio_src<0.3)
+		ratio_src=0.3;
+	if(ratio_templ<0.3)
+		ratio_templ=0.3;
+
+	double count=0;
+
+	for(int i=0;i<templ.cols;i++)
+		for(int j=0;j<templ.rows;j++){
+
+			if((abs(tmp.at<uchar>(Point(i,j))-templ.at<uchar>(Point(i,j))))<100)
+				count++;
+			
+	}	
+	double diff_ratio=abs(ratio_src-ratio_templ);
+
+	double bp1[8],bp2[8];
+
+	BP_algorithm(bp1,src);
+	BP_algorithm(bp2,templ);
+	double similarity = 0;
+	
+	for(int n= 0;n<7;n++){
+		if((bp1[n] - bp2[n])*(bp1[n] - bp2[n])>similarity)
+		similarity = (bp1[n] - bp2[n])*(bp1[n] - bp2[n]);
+	}
+	return similarity;
+}
+
+char BestMatch1(Mat src){
+	image2char Best;
+	double best_similarity=0;
+	for(int i=0;i<TEMPLATE_NUMBER;i++){
+		double s=check_similarity1(src,ic[i].image);
+		if(s>best_similarity){
+			best_similarity=s;
+			Best=ic[i];
+		}
+	}
+	return Best.s;		
+}
+char BestMatch2(Mat src){
+	image2char Best;
+	double best_similarity=8;
+	for(int i=0;i<TEMPLATE_NUMBER;i++){
+		double s=check_similarity2(src,ic[i].image);
+		if(s<best_similarity){
+			best_similarity=s;
+			Best=ic[i];
+		}
+	}
+	return Best.s;		
+}
+Mat getInput(char* s){
+	IplImage *pSrcImage = cvLoadImage(s,CV_LOAD_IMAGE_COLOR);
+	IplImage *g_pGrayImage = NULL;
+	IplImage *g_pBinaryImage = NULL;
+	
+	g_pGrayImage =  cvCreateImage(cvGetSize(pSrcImage), IPL_DEPTH_8U, 1);
+	cvCvtColor(pSrcImage, g_pGrayImage, CV_BGR2GRAY);
+	g_pBinaryImage = cvCreateImage(cvGetSize(g_pGrayImage), IPL_DEPTH_8U, 1);
+	cvThreshold(g_pGrayImage, g_pBinaryImage, 0, 255, CV_THRESH_OTSU);
+	Mat mtx(g_pBinaryImage);
+	int count_black=0,count_white=0;
+	for(int i=0;i<mtx.cols;i++){
+		for(int j=0;j<mtx.rows;j++){
+			if(mtx.at<uchar>(Point(i,j))==0){
+				count_black++;
+			}else if(mtx.at<uchar>(Point(i,j))==255){
+				count_white++;
+			}
+		}
+	}
+	if(count_black >count_white){
+		for(int i=0;i<mtx.cols;i++){
+		for(int j=0;j<mtx.rows;j++){
+			if(mtx.at<uchar>(Point(i,j))==0){
+				mtx.at<uchar>(Point(i,j))=255;
+			}else if(mtx.at<uchar>(Point(i,j))==255){
+				mtx.at<uchar>(Point(i,j))=0;
+			}
+		}
+	}
+	}
+	return mtx;
+}
+
+Mat getInputTest(char* s){
+	IplImage *pSrcImage = cvLoadImage(s,CV_LOAD_IMAGE_COLOR);
+	IplImage *g_pGrayImage = NULL;
+	IplImage *g_pBinaryImage = NULL;
+	cvSmooth(pSrcImage,pSrcImage,CV_GAUSSIAN,3,3);
+	g_pGrayImage =  cvCreateImage(cvGetSize(pSrcImage), IPL_DEPTH_8U, 1);
+	cvCvtColor(pSrcImage, g_pGrayImage, CV_BGR2GRAY);
+	g_pBinaryImage = cvCreateImage(cvGetSize(g_pGrayImage), IPL_DEPTH_8U, 1);
+	cvThreshold(g_pGrayImage, g_pBinaryImage, 0, 255, CV_THRESH_OTSU);
+	Mat mtx(g_pBinaryImage);
+	int count_black=0,count_white=0;
+	for(int i=0;i<mtx.cols;i++){
+		for(int j=0;j<mtx.rows;j++){
+			if(mtx.at<uchar>(Point(i,j))==0){
+				count_black++;
+			}else if(mtx.at<uchar>(Point(i,j))==255){
+				count_white++;
+			}
+		}
+	}
+	if(count_black >count_white){
+		for(int i=0;i<mtx.cols;i++){
+		for(int j=0;j<mtx.rows;j++){
+			if(mtx.at<uchar>(Point(i,j))==0){
+				mtx.at<uchar>(Point(i,j))=255;
+			}else if(mtx.at<uchar>(Point(i,j))==255){
+				mtx.at<uchar>(Point(i,j))=0;
+			}
+		}
+	}
+	}
+	cvShowImage("input", pSrcImage ); 
+	return mtx;
+}
+
+int main( )   
+{   	LoadDatabase();
+
+
+	Mat mtx=getInputTest(INPUTFILE);
+
+	int row_start = 0,row_last = 0;
+	image_segmentation_horizonal(row_start,row_last,mtx);
+
+	int col_start[20] ,col_last[20],symbolnum=0;
+	image_segmentation_vertical(col_start,col_last,symbolnum,mtx);
+
+	
+
+	Mat component[20];
+	for(int i=0;i<symbolnum;i++)
+		component[i]=process_component(mtx(Rect(col_start[i],row_start,col_last[i]-col_start[i],row_last-row_start)));
+//	Mat a=process_component(component[1]);
+//	double s=check_similarity(component[0],ic[4].image);
+//	double s2=check_similarity(component[0],ic[11].image);
+//	cout<<s<<endl;
+//	cout<<s2<<endl;
+	for(int i=0;i<symbolnum;i++){
+		char c=BestMatch1(component[i]);
+		cout<<c<<' ';
+	}
+	cout<<endl;
+	for(int i=0;i<symbolnum;i++){
+		char c=BestMatch2(component[i]);
+		cout<<c<<' ';
+	}
+	cout<<endl;
+
+	//imshow("Original",mtx);
+
+
+	waitKey();  
+	return 0;   
+}   
+
+
+void LoadDatabase(){
+	ic[0].image=getInput("font/0.jpg");
+	ic[0].s='0';
+	ic[1].image=getInput("font/1.jpg");
+	ic[1].s='1';
+	ic[2].image=getInput("font/2.jpg");
+	ic[2].s='2';
+	ic[3].image=getInput("font/3.jpg");
+	ic[3].s='3';
+	ic[4].image=getInput("font/4.jpg");
+	ic[4].s='4';
+	ic[5].image=getInput("font/5.jpg");
+	ic[5].s='5';
+	ic[6].image=getInput("font/6.jpg");
+	ic[6].s='6';
+	ic[7].image=getInput("font/7.jpg");
+	ic[7].s='7';
+	ic[8].image=getInput("font/8.jpg");
+	ic[8].s='8';
+	ic[9].image=getInput("font/9.jpg");
+	ic[9].s='9';
+	ic[10].image=getInput("font/plus.jpg");
+	ic[10].s='+';
+	ic[11].image=getInput("font/minus.jpg");
+	ic[11].s='-';
+	ic[12].image=getInput("font/multiplus.jpg");
+	ic[12].s='X';
+	ic[13].image=getInput("font/division.jpg");
+	ic[13].s='/';
+	ic[14].image=getInput("font/equal.jpg");
+	ic[14].s='=';
+	ic[15].image=getInput("font/a00.jpg");
+	ic[15].s='0';
+	ic[16].image=getInput("font/a01.png");
+	ic[16].s='1';
+	ic[17].image=getInput("font/a02.png");
+	ic[17].s='2';
+	ic[18].image=getInput("font/a03.png");
+	ic[18].s='3';
+	ic[19].image=getInput("font/a04.png");
+	ic[19].s='4';
+	ic[20].image=getInput("font/a05.png");
+	ic[20].s='5';
+	ic[21].image=getInput("font/a06.png");
+	ic[21].s='6';
+	ic[22].image=getInput("font/a07.png");
+	ic[22].s='7';
+	ic[23].image=getInput("font/a08.png");
+	ic[23].s='8';
+	ic[24].image=getInput("font/a09.png");
+	ic[24].s='9';
+	ic[25].image=getInput("font/a0plus.png");
+	ic[25].s='+';
+	ic[26].image=getInput("font/a0minus.jpg");
+	ic[26].s='-';
+	ic[27].image=getInput("font/multiplus.jpg");
+	ic[27].s='X';
+	ic[28].image=getInput("font/division.jpg");
+	ic[28].s='/';
+	ic[29].image=getInput("font/equal.jpg");
+	ic[29].s='=';
+	ic[30].image=getInput("font/left.png");
+	ic[30].s='(';
+	ic[31].image=getInput("font/right.png");
+	ic[31].s=')';
+}

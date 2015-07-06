@@ -1,0 +1,7 @@
+cvSmooth(pSrcImage,pSrcImage,CV_GAUSSIAN,3,3);
+ input
+output
+高斯算法 
+以当前点为中心的3*3范围取值
+
+结果为(当前点*4+其它点*1)/12
